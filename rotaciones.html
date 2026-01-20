@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Rotaciones - Cronos</title>
+  <style>
+    :root{
+      --bg:#0b0f14;
+      --card:#121826;
+      --muted:#94a3b8;
+      --white:#e5e7eb;
+      --green:#22c55e;
+      --orange:#f59e0b;
+      --red:#ef4444;
+      --border:#1f2937;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--white);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      touch-action: manipulation;
+    }
+    header{
+      position: sticky;
+      top:0;
+      background: rgba(11,15,20,.92);
+      backdrop-filter: blur(8px);
+      border-bottom:1px solid var(--border);
+      padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+      z-index:10;
+    }
+    .topbar{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+    .buttons{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    button{
+      border:1px solid var(--border);
+      background: #0f172a;
+      color:var(--white);
+      padding:12px 14px;
+      border-radius:14px;
+      font-size:16px;
+      font-weight:600;
+      cursor:pointer;
+      min-width: 110px;
+    }
+    button:active{ transform: scale(.98); }
+    button.primary{ background:#1d4ed8; border-color:#1d4ed8; }
+    button.danger{ background:#7f1d1d; border-color:#7f1d1d; }
+    .hint{
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    main{
+      padding: 14px 12px 18px 12px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap:12px;
+    }
+    @media (min-width: 900px){
+      .grid{ grid-template-columns: repeat(3, 1fr); }
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:18px;
+      padding:14px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      min-height: 92px;
+      user-select:none;
+      -webkit-user-select:none;
+    }
+    .left{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      min-width: 0;
+    }
+    .name{
+      font-size:20px;
+      font-weight:800;
+      line-height:1.05;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .meta{
+      color:var(--muted);
+      font-size:13px;
+    }
+    .time{
+      font-variant-numeric: tabular-nums;
+      font-size:26px;
+      font-weight:900;
+      min-width: 92px;
+      text-align:right;
+    }
+
+    .good .name{ color: var(--green); }
+    .warn .name{ color: var(--orange); }
+    .bad  .name{ color: var(--red); }
+
+    .mini{
+      display:flex;
+      gap:8px;
+      align-items:center;
+    }
+    .mini button{
+      min-width:auto;
+      padding:10px 12px;
+      border-radius:14px;
+      font-size:14px;
+    }
+    .edit{
+      background: transparent;
+      border-color: var(--border);
+    }
+    input.nameEdit{
+      width: 220px;
+      max-width: 55vw;
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid var(--border);
+      background:#0f172a;
+      color:var(--white);
+      font-size:16px;
+      font-weight:700;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div>
+        <div style="font-size:18px;font-weight:900;">Rotaciones (12 jugadores)</div>
+        <div class="hint">Toque en un jugador = reset a 00:00 · Verde &lt; 3:00 · Naranja 3:00–4:30 · Rojo &gt; 4:30</div>
+      </div>
+      <div class="buttons">
+        <button class="primary" id="startAll">Start</button>
+        <button id="stopAll">Stop</button>
+        <button class="danger" id="resetAll">Reset All</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <script>
+    const PLAYER_COUNT = 12;
+    const GREEN_LIMIT = 180;   // 3:00
+    const ORANGE_LIMIT = 270;  // 4:30
+
+    let running = false;
+    let rafId = null;
+    const players = [];
+
+    function loadNames() {
+      try {
+        const raw = localStorage.getItem("rotation_names");
+        if (!raw) return null;
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr) || arr.length !== PLAYER_COUNT) return null;
+        return arr;
+      } catch { return null; }
+    }
+
+    function saveNames() {
+      const names = players.map(p => p.name);
+      localStorage.setItem("rotation_names", JSON.stringify(names));
+    }
+
+    function formatTime(sec) {
+      sec = Math.max(0, Math.floor(sec));
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return `${m}:${String(s).padStart(2,"0")}`;
+    }
+
+    function statusClass(sec){
+      if (sec < GREEN_LIMIT) return "good";
+      if (sec < ORANGE_LIMIT) return "warn";
+      return "bad";
+    }
+
+    const grid = document.getElementById("grid");
+
+    function createCard(i){
+      const card = document.createElement("div");
+      card.className = "card good";
+      card.dataset.idx = i;
+
+      const left = document.createElement("div");
+      left.className = "left";
+
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = players[i].name;
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = "Toque para reset";
+
+      left.appendChild(name);
+      left.appendChild(meta);
+
+      const right = document.createElement("div");
+      right.className = "mini";
+
+      const time = document.createElement("div");
+      time.className = "time";
+      time.textContent = "0:00";
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "edit";
+      editBtn.textContent = "Editar";
+
+      right.appendChild(time);
+      right.appendChild(editBtn);
+
+      card.appendChild(left);
+      card.appendChild(right);
+
+      card.addEventListener("click", (e) => {
+        const idx = Number(card.dataset.idx);
+        if (e.target === editBtn) return;
+        players[idx].elapsed = 0;
+        players[idx].lastTick = performance.now();
+        renderOne(idx);
+      });
+
+      editBtn.addEventListener("click", () => {
+        const idx = Number(card.dataset.idx);
+        const input = document.createElement("input");
+        input.className = "nameEdit";
+        input.value = players[idx].name;
+
+        left.replaceChild(input, name);
+        input.focus();
+        input.select();
+
+        function commit() {
+          players[idx].name = input.value.trim() || `Jugador ${idx+1}`;
+          saveNames();
+          name.textContent = players[idx].name;
+          left.replaceChild(name, input);
+        }
+
+        input.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter") commit();
+          if (ev.key === "Escape") left.replaceChild(name, input);
+        });
+        input.addEventListener("blur", commit);
+      });
+
+      return { card, nameEl: name, timeEl: time };
+    }
+
+    function renderOne(i){
+      const p = players[i];
+      const ui = p.ui;
+      ui.timeEl.textContent = formatTime(p.elapsed);
+
+      const cls = statusClass(p.elapsed);
+      ui.card.classList.remove("good","warn","bad");
+      ui.card.classList.add(cls);
+    }
+
+    function renderAll(){
+      for (let i=0;i<players.length;i++) renderOne(i);
+    }
+
+    function tick(now){
+      if (!running) return;
+
+      for (const p of players){
+        const dt = (now - p.lastTick) / 1000;
+        p.lastTick = now;
+        p.elapsed += dt;
+      }
+      renderAll();
+      rafId = requestAnimationFrame(tick);
+    }
+
+    document.getElementById("startAll").addEventListener("click", () => {
+      if (running) return;
+      running = true;
+      const now = performance.now();
+      for (const p of players) p.lastTick = now;
+      rafId = requestAnimationFrame(tick);
+    });
+
+    document.getElementById("stopAll").addEventListener("click", () => {
+      running = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+    });
+
+    document.getElementById("resetAll").addEventListener("click", () => {
+      const now = performance.now();
+      for (const p of players){
+        p.elapsed = 0;
+        p.lastTick = now;
+      }
+      renderAll();
+    });
+
+    const saved = loadNames();
+    const defaultNames = Array.from({length: PLAYER_COUNT}, (_,i)=>`Jugador ${i+1}`);
+    const names = saved ?? defaultNames;
+
+    for (let i=0;i<PLAYER_COUNT;i++){
+      players.push({
+        name: names[i],
+        elapsed: 0,
+        lastTick: performance.now(),
+        ui: null
+      });
+    }
+
+    for (let i=0;i<PLAYER_COUNT;i++){
+      const ui = createCard(i);
+      players[i].ui = ui;
+      grid.appendChild(ui.card);
+      renderOne(i);
+    }
+  </script>
+</body>
+</html>
